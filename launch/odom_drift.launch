@@ -1,0 +1,7 @@
+<launch>
+
+  <group ns="odom_drift">
+    <node pkg="odom_drift" name="odom_drift" type="odom_drift" output="screen"/>
+  </group>
+
+</launch>
