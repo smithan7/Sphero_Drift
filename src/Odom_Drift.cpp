@@ -44,19 +44,19 @@ Odom_Drift::Odom_Drift(ros::NodeHandle nHandle){
 		this->speed_var = drift;
 	}
 	else{
-		this->speed_var = 0.0;
+		this->speed_var = 0.05;
 	}
 	if (nHandle.getParam("/drift_perp_var", drift)){
 		this->perp_var = drift;
 	}
 	else{
-		this->perp_var = 0.0;
+		this->perp_var = 0.05;
 	}
 	if (nHandle.getParam("/drift_yaw_var", drift)){
 		this->yaw_var = drift;
 	}
 	else{
-		this->yaw_var = 0.0;
+		this->yaw_var = 0.05;
 	}
 	if (nHandle.getParam("/drift_x_start_mean", drift)){
 		this->x_z_mean = drift;
@@ -156,13 +156,27 @@ void Odom_Drift::locationCallback( const nav_msgs::Odometry& odom_in ){
 		double dist = sqrt(pow(dx,2)+pow(dy,2));
 		dist += distribution_speed(generator);
 		std::normal_distribution<double> distribution_perp(this->perp_mean,this->perp_var);
-		double perp = distribution_speed(generator);
+		double perp_xy = distribution_speed(generator);
+		double perp_z = distribution_speed(generator);
 
+
+		double yaw_d = atan2(dy,dx);
+
+		// update drift position
+		this->odom_drift.pose.pose.position.x += dist * cos(yaw_d) + perp_xy * -sin(yaw_d);
+		this->odom_drift.pose.pose.position.y += dist * sin(yaw_d) + perp_xy * cos(yaw_d);
+		this->odom_drift.pose.pose.position.z += perp_z;
+		
 		// get heading of previous timestep, add noise to heading
     	tf::Quaternion quat; // the incoming geometry_msgs::Quaternion is transformed to a tf::Quaterion
     	tf::quaternionMsgToTF(odom_in.pose.pose.orientation, quat); // the tf::Quaternion has a method to acess roll pitch and yaw
     	double roll, pitch, yaw_in;
     	tf::Matrix3x3(quat).getRPY(roll, pitch, yaw_in);
+    	// get change
+    	tf::quaternionMsgToTF(odom_km1.pose.pose.orientation, quat); // the tf::Quaternion has a method to acess roll pitch and yaw
+    	double yaw_km1;
+    	tf::Matrix3x3(quat).getRPY(roll, pitch, yaw_km1);
+    	double dyaw = yaw_in - yaw_km1;
     	// get heading of drift
     	tf::quaternionMsgToTF(odom_drift.pose.pose.orientation, quat); // the tf::Quaternion has a method to acess roll pitch and yaw
     	double yaw_drift;
@@ -170,7 +184,7 @@ void Odom_Drift::locationCallback( const nav_msgs::Odometry& odom_in ){
     	// get diff between actual and drift headings
     	double yaw_error = yaw_in - yaw_drift;
     	// this acts as a soft constraint on drift heading, prevents it from growing too large
-		std::normal_distribution<double> distribution_yaw(this->yaw_mean + yaw_error,this->yaw_var);
+		std::normal_distribution<double> distribution_yaw(dyaw + this->yaw_mean + yaw_error,this->yaw_var);
 		// update current drift heading
 		yaw_drift += distribution_yaw(generator);
 
@@ -178,9 +192,6 @@ void Odom_Drift::locationCallback( const nav_msgs::Odometry& odom_in ){
 		q.setRPY( roll, pitch, yaw_drift );
 		q.normalize();
 
-		// update drift position
-		this->odom_drift.pose.pose.position.x += dist * cos(yaw_drift) + perp * -sin(yaw_drift);
-		this->odom_drift.pose.pose.position.y += dist * sin(yaw_drift) + perp * cos(yaw_drift);
 		tf::quaternionTFToMsg(q, this->odom_drift.pose.pose.orientation);
 		
 		// convert to PoseStamped for path
